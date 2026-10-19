@@ -1,8 +1,7 @@
 // Pantallas y componentes de la aplicación de condominio.
 import 'dart:convert';
-import 'dart:html' as html;
-
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../services/api_service.dart';
@@ -43,21 +42,19 @@ class _LoginPageState extends State<LoginPage> {
       error = null;
     });
     try {
-      final response = await html.HttpRequest.request(
-        '$apiBaseUrl/login',
-        method: 'POST',
-        requestHeaders: const {
+      final response = await http.post(Uri.parse('$apiBaseUrl/login'),
+        headers: const {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
         },
-        sendData: jsonEncode({
+        body: jsonEncode({
           'username': username.text.trim(),
           'password': password.text,
           'device_name': 'condominio-flutter',
         }),
       );
-      final data = jsonDecode(response.responseText ?? '{}');
-      final status = response.status ?? 0;
+      final data = jsonDecode(response.body.isEmpty ? '{}' : response.body);
+      final status = response.statusCode;
       if (status < 200 || status >= 300 || data['token'] == null) {
         throw ApiException(errorText(data));
       }
@@ -71,7 +68,7 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       );
-    } on html.ProgressEvent {
+    } on http.ClientException {
       setState(() => error = 'No se pudo conectar con Laravel. Inicia el servidor en el puerto 8000.');
     } on ApiException catch (e) {
       setState(() => error = e.message);
@@ -194,10 +191,9 @@ class _HomePageState extends State<HomePage> {
   bool get guard => role.toLowerCase() == 'guardia';
 
   List<MenuOption> get options {
-    final result = <MenuOption>[
-      const MenuOption('Dashboard', Icons.dashboard_outlined, null),
-    ];
+    final result = <MenuOption>[];
     if (admin) {
+      result.add(const MenuOption('Dashboard', Icons.dashboard_outlined, null));
       result.addAll(const [
         MenuOption('Viviendas', Icons.home_work_outlined, Module.homes),
         MenuOption('Residentes', Icons.people_outline, Module.residents),
@@ -208,12 +204,10 @@ class _HomePageState extends State<HomePage> {
     } else if (resident) {
       result.addAll(const [
         MenuOption('Visitas', Icons.badge_outlined, Module.visits),
-        MenuOption('Incidencias', Icons.report_problem_outlined, Module.incidents),
       ]);
     } else if (guard) {
       result.addAll(const [
         MenuOption('Visitas', Icons.badge_outlined, Module.visits),
-        MenuOption('Viviendas', Icons.home_work_outlined, Module.homes),
       ]);
     }
     return result;
@@ -494,7 +488,12 @@ class _ModulePageState extends State<ModulePage> {
   }
 
   Future<void> action(Map<String, dynamic> item, String command, String label) async {
-    try { await widget.api.call('${info.path}/${item['id']}/$command', method: 'POST'); notice('$label realizado correctamente.'); load(); } on ApiException catch (e) { notice(e.message, true); }
+    try {
+      final response = await widget.api.call('${info.path}/${item['id']}/$command', method: 'POST');
+      notice('$label realizado correctamente.');
+      load();
+      if (command == 'pay' && response is Map && response['invoice'] is Map && mounted) await showPaymentInvoice(context, Map<String, dynamic>.from(response['invoice'] as Map));
+    } on ApiException catch (e) { notice(e.message, true); }
   }
 
   List<Widget> actions(Map<String, dynamic> item) {
@@ -530,6 +529,23 @@ class _ModulePageState extends State<ModulePage> {
     ]);
   }
 }
+
+Future<void> showPaymentInvoice(BuildContext context, Map<String, dynamic> invoice) => showDialog<void>(
+  context: context,
+  builder: (_) => AlertDialog(
+    title: Row(children: const [Icon(Icons.receipt_long, color: Color(0xff315d8f)), SizedBox(width: 10), Text('Recibo de pago')]),
+    content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('No. ${field(invoice, 'number')}', style: const TextStyle(fontWeight: FontWeight.bold)),
+      const Divider(height: 26),
+      Text('Vivienda: ${field(mapField(invoice, 'home'), 'code')}'),
+      Text('Período: ${field(invoice, 'period')}'),
+      Text('Referencia: ${field(invoice, 'reference', '—')}'),
+      const SizedBox(height: 12),
+      Text('TOTAL PAGADO: L ${field(invoice, 'amount', '0.00')}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+    ])),
+    actions: [FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Listo'))],
+  ),
+);
 
 class EditDialog extends StatefulWidget {
   const EditDialog({super.key, required this.api, required this.info, this.item});

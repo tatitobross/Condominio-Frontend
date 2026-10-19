@@ -11,3 +11,6 @@ build/
 *.iml
 .DS_Store
 Thumbs.db
+.gradle-user-home/
+.pub-cache/
+work/

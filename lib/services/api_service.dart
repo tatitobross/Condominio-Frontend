@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
+import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 
@@ -15,12 +15,10 @@ class Api {
 
   Future<dynamic> call(String path, {String method = 'GET', Map<String, dynamic>? body}) async {
     try {
-      // HttpRequest.request treats a useful 422 validation response as a
-      // network exception. Using load-end lets us read Laravel's real message.
       final result = await _request(path, method: method, body: body);
-      final text = result.responseText ?? '';
+      final text = result.body;
       final decoded = text.isEmpty ? <String, dynamic>{} : jsonDecode(text);
-      final status = result.status ?? 0;
+      final status = result.statusCode;
       if (status < 200 || status >= 300) throw ApiException(errorText(decoded));
       return decoded;
     } on TimeoutException {
@@ -32,17 +30,11 @@ class Api {
     }
   }
 
-  Future<html.HttpRequest> _request(String path, {required String method, Map<String, dynamic>? body}) {
-    final request = html.HttpRequest();
-    final done = Completer<html.HttpRequest>();
-    request.open(method, '$apiBaseUrl$path');
-    request.setRequestHeader('Accept', 'application/json');
-    request.setRequestHeader('Authorization', 'Bearer $token');
-    if (body != null) request.setRequestHeader('Content-Type', 'application/json');
-    request.onLoadEnd.listen((_) { if (!done.isCompleted) done.complete(request); });
-    request.onError.listen((_) { if (!done.isCompleted) done.completeError(TimeoutException('No se pudo conectar con Laravel.')); });
-    request.send(body == null ? null : jsonEncode(body));
-    return done.future.timeout(const Duration(seconds: 15));
+  Future<http.Response> _request(String path, {required String method, Map<String, dynamic>? body}) async {
+    final request = http.Request(method, Uri.parse('$apiBaseUrl$path'));
+    request.headers.addAll({'Accept': 'application/json', 'Authorization': 'Bearer $token', if (body != null) 'Content-Type': 'application/json'});
+    request.body = body == null ? '' : jsonEncode(body);
+    return http.Response.fromStream(await request.send().timeout(const Duration(seconds: 15)));
   }
 }
 
